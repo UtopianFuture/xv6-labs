@@ -65,6 +65,7 @@ void __attribute__ ((noinline)) foo(int i, int *j) {
     write(2, ".", 1);
   }
   *j += 1;
+  // sigreturn();
 }
 
 //
@@ -93,6 +94,7 @@ test1()
   if(count < 10){
     printf("\ntest1 failed: too few calls to the handler\n");
   } else if(i != j){
+    // printf("j: %d\n", j);
     // the loop should have called foo() i times, and foo() should
     // have incremented j once per call, so j should equal i.
     // once possible source of errors is that the handler may

@@ -77,8 +77,19 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
+    p->tickcounts++;
+    if(p->alarmticks == p->tickcounts) {
+      // p->tickcounts = 0;
+      // p->trapframe->kernel_sp -= 8;
+      // *(uint64 *) p->trapframe->kernel_sp = p->trapframe->epc;
+      // p->tpc = p->trapframe->epc;
+      memmove(&(p->cptrapframe), p->trapframe, sizeof(struct trapframe));
+      p->trapframe->epc = (uint64) p->alarmhandler;
+      // printf("which_dev: %d\nhandler: %d\n", which_dev, (uint64) p->alarmhandler);
+    }
     yield();
+  }
 
   usertrapret();
 }
@@ -217,4 +228,3 @@ devintr()
     return 0;
   }
 }
-

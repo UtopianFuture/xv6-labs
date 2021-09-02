@@ -126,6 +126,9 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  p->alarmticks = 0;
+  p->alarmhandler = 0;
+  p->tickcounts = 0;
 
   return p;
 }
@@ -224,6 +227,7 @@ userinit(void)
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
+  p->cptrapframe = *(p->trapframe);
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");

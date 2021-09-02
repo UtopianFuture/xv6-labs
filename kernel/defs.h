@@ -80,6 +80,7 @@ int             pipewrite(struct pipe*, uint64, int);
 void            printf(char*, ...);
 void            panic(char*) __attribute__((noreturn));
 void            printfinit(void);
+void            backtrace();
 
 // proc.c
 int             cpuid(void);
@@ -135,6 +136,7 @@ char*           strncpy(char*, const char*, int);
 int             argint(int, int*);
 int             argstr(int, char*, int);
 int             argaddr(int, uint64 *);
+int             argptr(int, char **, int);
 int             fetchstr(uint64, char*, int);
 int             fetchaddr(uint64, uint64*);
 void            syscall();
