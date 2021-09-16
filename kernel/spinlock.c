@@ -52,6 +52,7 @@ initlock(struct spinlock *lk, char *name)
 #ifdef LAB_LOCK
   lk->nts = 0;
   lk->n = 0;
+  // printf("name: %s\n", name);
   findslot(lk);
 #endif  
 }

@@ -1771,13 +1771,17 @@ manywrites(char *s)
       unlink(name);
       exit(0);
     }
+    printf("1.ci: %d\n", ci);
   }
 
   for(int ci = 0; ci < nchildren; ci++){
+    printf("2.ci: %d\n", ci);
     int st = 0;
     wait(&st);
+    printf("3.ci: %d\n", ci);
     if(st != 0)
       exit(st);
+    printf("4.ci: %d\n", ci);
   }
   exit(0);
 }

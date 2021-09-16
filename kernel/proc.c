@@ -70,6 +70,7 @@ myproc(void) {
   struct cpu *c = mycpu();
   struct proc *p = c->proc;
   pop_off();
+  // printf("myproc: %p\n", p);
   return p;
 }
 
@@ -334,8 +335,10 @@ exit(int status)
 {
   struct proc *p = myproc();
 
-  if(p == initproc)
+  if(p == initproc) {
+    printf("initproc: %p\n", initproc);
     panic("init exiting");
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
