@@ -284,6 +284,32 @@ fork(void)
 
   np->parent = p;
 
+  // np->vma = p->vma;
+  // filedup(np->vma->fd);
+  np->vma = 0;
+  struct VMA *pv = p->vma;
+  struct VMA *pre = 0;
+  while(pv){
+    struct VMA *vma = getvma();
+    vma->count = pv->count;
+    vma->start = pv->start;
+    vma->end = pv->end;
+    vma->offset = pv->offset;
+    vma->length = pv->length;
+    vma->prot = pv->prot;
+    vma->flags = pv->flags;
+    vma->fd = pv->fd;
+    filedup(vma->fd);
+    vma->next = 0;
+    if(pre == 0){
+      np->vma = vma;
+    }else{
+      pre->next = vma;
+    }
+    pre = vma;
+    pv = pv->next;
+  }
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -343,6 +369,15 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // remove all mmap vma
+  struct VMA* v = p->vma;
+  while(v){
+    writeback(v, v->start, v->length);
+    uvmunmap(p->pagetable, v->start, PGROUNDUP(v->length) / PGSIZE, 1);
+    fileclose(v->fd);
+    v = v->next;
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

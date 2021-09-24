@@ -3,8 +3,11 @@
 #include "memlayout.h"
 #include "riscv.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -68,11 +71,64 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    if(r_scause() == 0xd || r_scause() == 0xf){
+      uint64 va = r_stval();
+      struct VMA * v = p->vma;
+
+      while (v) {
+        if (va >= v->start && va < v->end) {
+          break;
+        }
+        v = v->next;
+      }
+
+      if(v == 0){
+        printf("trap: v = 0, va: %x\n", PGROUNDDOWN(va));
+        p->killed = 1; // not mmap addr
+        goto fault;
+      }
+      if(r_scause() == 0xd && !(v->prot & PTE_R)){
+        printf("unreadable vma\n");
+        p->killed = 1; // unreadable vma
+        goto fault;
+      }
+      if(r_scause() == 0xf && !(v->prot & PTE_W)){
+        printf("unwritable vma\n");
+        p->killed = 1; // unwritable vma
+        goto fault;
+      }
+
+      uint64 a = PGROUNDDOWN(va);
+
+      char * mem = kalloc();
+      if(mem == 0){ // alloc memory failed
+        p->killed = 1;
+      }
+      // printf("mem: %p\n", (uint64)mem);
+      memset(mem, 0, PGSIZE);
+      printf("offset: %x, va: %x, start: %x, read: %x\n",
+        v->offset, a, v->start, v->offset + a - v->start);
+      if(mappages(p->pagetable, a, PGSIZE, (uint64)mem, v->prot) != 0){
+        printf("mapping fault\n");
+        kfree(mem);
+        p->killed = 1;
+        goto fault;
+      }
+
+      int r;
+      struct file * f = v->fd;
+      ilock(f->ip);
+      if((r = readi(f->ip, 0, (uint64)mem, v->offset + a - v->start, PGSIZE)) > 0)
+        f->off += r;
+      iunlock(f->ip);
+    } else {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   }
 
+fault:
   if(p->killed)
     exit(-1);
 

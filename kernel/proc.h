@@ -103,4 +103,20 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  struct VMA * vma;            // mmap()
+};
+
+#define NVMA 16
+#define VMASTART MAXVA / 2
+struct VMA {
+  int count;
+  uint64 start;
+  uint64 end;
+  uint64 length;
+  int prot;
+  int flags;
+  struct file * fd;
+  uint offset;
+  struct VMA * next;
+  struct spinlock lock;
 };

@@ -36,8 +36,10 @@ err(char *why)
 void
 _v1(char *p)
 {
+  // printf("p: %s\n", p);
   int i;
   for (i = 0; i < PGSIZE*2; i++) {
+      // printf("p: %c\n", p[i]);
     if (i < PGSIZE + (PGSIZE/2)) {
       if (p[i] != 'A') {
         printf("mismatch at %d, wanted 'A', got 0x%x\n", i, p[i]);
@@ -184,6 +186,7 @@ mmap_test(void)
     char b;
     if (read(fd, &b, 1) != 1)
       err("read (1)");
+    // printf("dirty: b: %c\n", b);
     if (b != 'Z')
       err("file does not contain modifications");
   }
@@ -227,10 +230,12 @@ mmap_test(void)
   close(fd2);
   unlink("mmap2");
 
-  if(memcmp(p1, "12345", 5) != 0)
-    err("mmap1 mismatch");
+  if(memcmp(p1, "12345", 5) != 0){
+    // printf("p1: %s\n", p1);
+    err("1. mmap1 mismatch");
+  }
   if(memcmp(p2, "67890", 5) != 0)
-    err("mmap2 mismatch");
+    err("2. mmap2 mismatch");
 
   munmap(p1, PGSIZE);
   if(memcmp(p2, "67890", 5) != 0)

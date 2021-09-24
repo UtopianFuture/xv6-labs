@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "proc.h"
+#include "fcntl.h"
+#include "file.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +19,21 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+struct VMA vma[NVMA];
+
+struct VMA * getvma(){
+  for (int i = 0; i < NVMA; i++){
+    acquire(&vma[i].lock);
+    if(vma[i].end == vma[i].start){
+      vma[i].count = i;
+      release(&vma[i].lock);
+      return &vma[i];
+    }
+    release(&vma[i].lock);
+  }
+  panic("not enough vma\n");
+}
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -169,10 +189,14 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+    if((pte = walk(pagetable, a, 0)) == 0){
+      // panic("uvmunmap: walk");
+      continue;
+    }
+    if((*pte & PTE_V) == 0){
+      // panic("uvmunmap: not mapped");
+      continue;
+    }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -272,7 +296,7 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
-      panic("freewalk: leaf");
+      // panic("freewalk: leaf");
     }
   }
   kfree((void*)pagetable);
@@ -428,4 +452,128 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+uint64 mmap(uint64 addr, uint length, int prot, int flags, int fd, uint offset)
+{
+  struct proc * p = myproc();
+  struct VMA * v = getvma();
+  struct file * f = p->ofile[fd];
+
+  int pte_flag = PTE_U;
+  if (prot & PROT_WRITE) {
+    if(!f->writable && !(flags & MAP_PRIVATE))
+      return -1; // map to a unwritable file with PROT_WRITE
+    pte_flag |= PTE_W;
+  }
+  if (prot & PROT_READ) {
+    if(!f->readable)
+      return -1; // map to a unreadable file with PROT_READ
+    pte_flag |= PTE_R;
+  }
+
+  printf("length: %x, prot: %x, flags: %x,"
+    " fd: %x, offset: %x\n", length, prot, flags, fd, offset);
+  v->fd = f;
+  v->flags = flags;
+  v->offset = offset;
+  v->length = length;
+  v->prot = pte_flag;
+  // p->sz += length;
+  filedup(f); // increase the file's reference count
+  struct VMA * pv = p->vma;
+  if(pv == 0){
+    v->start = VMASTART;
+    v->end = v->start + length;
+    p->vma = v;
+  }else{
+    while(pv->next) {
+      printf("pv: %p\n", pv);
+      pv = pv->next;
+    }
+    v->start = PGROUNDUP(pv->end);
+    v->end = v->start + length;
+    pv->next = v;
+    v->next = 0;
+  }
+  addr = v->start;
+  printf("mmap: p->sz: %x, offset: %x, start: %x, end: %x, length: %x\n",
+      p->sz, v->offset, v->start, v->end, v->length);
+  return addr;
+}
+
+int munmap(uint64 addr, uint length)
+{
+  struct proc * p = myproc();
+  struct VMA * v = p->vma;
+  struct VMA * pre = 0;
+  int wb;
+  while (v) {
+    if (addr >= v->start && addr < v->end) {
+      v->length -= length;
+      break;
+    }
+    pre = v;
+    v = v->next;
+  }
+
+  if (v == 0)
+    return -1;
+
+  struct file * f = v->fd;
+
+  if ((v->flags & MAP_SHARED) && (v->start == addr)) {
+    wb = writeback(v, v->start, length);
+    if(wb != 0)
+      return wb;
+  }
+  uvmunmap(p->pagetable, addr, PGROUNDUP(length) / PGSIZE, 1);
+
+  if (addr == v->start) {
+    if (v->length == 0) { // remove all pages of a previous mmap
+      fileclose(f);           // decrement the reference count
+      if(pre == 0){
+        pre = v->next;
+      }else{
+        pre->next = v->next;
+      }
+      p->vma = pre; // free the vma
+    } else {
+      v->start -= length;
+      v->offset += length;
+    }
+  } else { // addr = v->end
+      v->end -= length;
+  }
+  printf("munmap: flags: %x, addr: %x, start: %x, end: %x, lenght: %x\n",
+      v->flags, addr, v->start, v->end, v->length);
+  return 0;
+}
+
+int writeback(struct VMA *v, uint64 addr, int n){
+  if(!(v->prot & PTE_W)) // only read, don't need to writeback
+    return 0;
+  struct file * f = v->fd;
+  int r, i = 0;
+  int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+  while(i < n){
+    int n1 = n - i;
+    if(n1 > max)
+      n1 = max;
+
+    begin_op();
+    ilock(f->ip);
+    if ((r = writei(f->ip, 1, addr + i, v->offset + v->start - addr + i, n1)) > 0)
+      f->off += r;
+    iunlock(f->ip);
+    end_op();
+    printf("writeback: fd: %x, addr: %x, offset: %x, size: %x\n",
+        f->ip, addr + i, addr + i, n1);
+    if(r != n1){
+      // error from writei
+      break;
+    }
+    i += r;
+  }
+  return i == n ? 0 : -1;
 }
