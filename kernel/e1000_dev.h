@@ -101,8 +101,8 @@ struct tx_desc
 {
   uint64 addr;
   uint16 length;
-  uint8 cso;
-  uint8 cmd;
+  uint8 cso; // the Checksum Offset
+  uint8 cmd; // Checksum Start
   uint8 status;
   uint8 css;
   uint16 special;

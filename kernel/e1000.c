@@ -95,26 +95,68 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
   // the mbuf contains an ethernet frame; program it into
   // the TX descriptor ring so that the e1000 sends it. Stash
   // a pointer so that it can be freed after sending.
   //
-  
+  // printf("trans: len: %x, buf: %s\n", m->len, m->head);
+   // get the next packet form TX ring
+  // printf("TDT: %d\n", regs[E1000_TDT]);
+  // for(int i = 0; i < TX_RING_SIZE; i++){
+  //   printf("tx_ring%d: addr: %x, length: %x, cso: %x, cmd: %x,"
+  //       " status: %x, css: %x, special: %x\n", i, tx_ring[i].addr, tx_ring[i].length,
+  //       tx_ring[i].cso, tx_ring[i].cmd, tx_ring[i].status, tx_ring[i].css, tx_ring[i].special);
+  // }
+  acquire(&e1000_lock);
+  int ring_tail = regs[E1000_TDT];
+  struct tx_desc tail = tx_ring[ring_tail];
+  if((tail.status & E1000_TXD_STAT_DD) == 0){ // check if the the ring is overflowing
+    release(&e1000_lock);
+    panic("E1000_TXD_STAT_DD\n");
+  }else{
+    if(tx_mbufs[ring_tail]) // free the last mbuf that was transmitted from that descriptor
+      mbuffree(tx_mbufs[ring_tail]);
+  }
+
+  tx_ring[ring_tail].addr = (uint64)m->head;
+  tx_ring[ring_tail].length = (uint16)m->len;
+   // 10011011, IDE = 1, VLE = 0, DEXT = 0, RPS = 1, RS = 1, IC = 0, IFCS = 1, EOP = 1
+  tx_ring[ring_tail].cmd = 0x9B;
+  // struct mbuf * stash = m;
+  regs[E1000_TDT] = (ring_tail + 1) % TX_RING_SIZE;
+  release(&e1000_lock);
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+  // printf("RDT: %d\n", (regs[E1000_RDT] + 1) % RX_RING_SIZE);
+  // for(int i = 0; i < RX_RING_SIZE; i++){
+  //   printf("rx_ring%d: addr: %x, length: %x, csum: %x, status: %x,"
+  //       " errors: %x, special: %x\n", i, rx_ring[i].addr, rx_ring[i].length,
+  //       rx_ring[i].csum, rx_ring[i].status, rx_ring[i].errors, rx_ring[i].special);
+  // }
+  int ring_head = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  struct rx_desc head = rx_ring[ring_head];
+  while(head.status & E1000_RXD_STAT_DD){ // scan the RX ring
+    acquire(&e1000_lock);
+    struct mbuf * buf = rx_mbufs[ring_head];
+    buf->len += head.length; // update the mbuf's m->len
+    rx_mbufs[ring_head] = mbufalloc(0); // allocate a new mbuf using mbufalloc()
+    if (!rx_mbufs[ring_head])
+      panic("e1000");
+    rx_ring[ring_head].addr = (uint64) rx_mbufs[ring_head]->head;
+    rx_ring[ring_head].status = 0;
+    regs[E1000_RDT] = ring_head;
+    release(&e1000_lock);
+    net_rx(buf); // Deliver the mbuf to the network stack
+    ring_head = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    head = rx_ring[ring_head];
+  }
 }
 
 void
