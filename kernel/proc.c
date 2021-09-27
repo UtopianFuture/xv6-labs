@@ -514,6 +514,9 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
+  // save the current context in p->context
+  // switch to the scheduler context previously
+  // saved in cpu->scheduler
   swtch(&p->context, &mycpu()->context);
   mycpu()->intena = intena;
 }
