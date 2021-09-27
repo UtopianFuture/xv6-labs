@@ -14,6 +14,8 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+int count[(PHYSTOP - KERNBASE) >> 12];
+
 struct run {
   struct run *next;
 };
@@ -22,6 +24,28 @@ struct {
   struct spinlock lock;
   struct run *freelist;
 } kmem;
+
+int rcount(uint64 pa, int op){
+  if(pa >= (uint64)end && pa <= PHYSTOP) {
+    int offset = pa - (uint64)end; 
+    int idx = offset / PGSIZE;
+    if(op == 0){
+      count[idx] == 0 ? count[idx]:  count[idx]--; // op = 0, free the page
+      return 0;
+    } else if (op == 1){
+      count[idx] += 1; // op = 1, alloc or share the page
+      return 0;
+    } else if (op == 3) {
+      count[idx] = 1;
+      return 0;
+    } else {
+      return count[idx];
+    }
+  } else {
+    // printf("\npa: %p", pa);
+    return 0;
+  }
+}
 
 void
 kinit()
@@ -76,7 +100,9 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    rcount((uint64)r, 3); // set rcount to 1
+  }
   return (void*)r;
 }

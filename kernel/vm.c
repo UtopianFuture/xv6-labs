@@ -158,6 +158,12 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       return -1;
     if(*pte & PTE_V)
       panic("remap");
+    // if(*pte & PTE_COW){
+    //   rcount(pa, 1); // this page is shared, don't allow physical page
+    // }
+    if(pa >= KERNBASE){
+      rcount(pa, 1);
+    }
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -186,9 +192,17 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
+    uint64 pa = PTE2PA(*pte);
+    // if(*pte & PTE_COW){
+    //   rcount(pa, 0); // this page is shared, don't free this page.
+    // }
+    if(pa >= KERNBASE){
+      rcount(pa, 0);
+    }
     if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+      if(rcount(pa, 2) == 1){ // no process except kernel use this page
+        kfree((void*)pa);
+      }
     }
     *pte = 0;
   }
@@ -311,7 +325,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -320,11 +334,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if (flags & PTE_W) { // only if the page is writeable, 
+      flags = (flags | PTE_COW) & (~PTE_W); // clear PTE_W,
+      *pte = PA2PTE(pa) | flags; // set PTE_COW.
+    }
+    // rcount(pa, 1); // count++
+    // printf("uvmcopy: pa: %p\n", pa);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    // if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    //   kfree(mem);
+    //   goto err;
+    // }
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
   }
@@ -360,7 +383,33 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
-      return -1;
+        return -1;
+    pte_t * pte = walk(pagetable, va0, 1);
+    if(pte == 0){
+      exit(-1);
+    }
+    if(((*pte) & PTE_COW)) {
+      char * mem = kalloc(); // allocate a new page
+      if(mem == 0){
+        exit(-1);
+      }
+      // printf("usertrap: va: %p, pa: %p\n", va, pa);
+      rcount(pa0, 1);
+      memmove(mem, (char *)pa0, PGSIZE); // copy the old page to the new page
+      // install the new page in the PTE with PTE_W set
+      // not remap, but change the pte.
+      // if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      //   kfree(mem);
+      //   p->killed = 1;
+      //   exit(-1);
+      // }
+      *pte &= ~PTE_COW;
+      *pte |= PTE_W;
+      uint64 flag = PTE_FLAGS(*pte);
+      *pte = PA2PTE((uint64)mem) | flag;
+      rcount((uint64)mem, 1);
+      pa0 = (uint64)mem;
+    }
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

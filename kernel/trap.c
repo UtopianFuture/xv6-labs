@@ -67,6 +67,41 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 0xd || r_scause() == 0xf) {
+    char * mem = kalloc(); // allocate a new page
+    if(mem == 0){
+      p->killed = 1;
+      exit(-1);
+    }
+    uint64 va = PGROUNDDOWN(r_stval());
+    pte_t * pte = walk(p->pagetable, va, 1);
+    if(pte == 0){
+      p->killed = 0;
+      exit(-1);
+    }
+    
+    uint64 pa = PTE2PA(*pte);
+    if(*pte & PTE_COW){
+      // printf("usertrap: va: %p, pa: %p\n", va, pa);
+      rcount(pa, 1);
+      memmove(mem, (char *)pa, PGSIZE); // copy the old page to the new page
+      // install the new page in the PTE with PTE_W set
+      // not remap, but change the pte.
+      // if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+      //   kfree(mem);
+      //   p->killed = 1;
+      //   exit(-1);
+      // }
+      *pte &= ~PTE_COW;
+      *pte |= PTE_W;
+      uint64 flag = PTE_FLAGS(*pte);
+      *pte = PA2PTE((uint64)mem) | flag;
+      rcount((uint64)mem, 1);
+    } else {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
