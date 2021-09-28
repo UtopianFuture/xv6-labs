@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -156,8 +158,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
-      panic("remap");
+    // if(*pte & PTE_V)
+    //   panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -311,7 +313,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -320,13 +321,12 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    *pte = ((*pte) & (~PTE_W)) | PTE_COW; // set parent's page unwritable
+    if(mappages(new, i, PGSIZE, (uint64)pa, (flags & (~PTE_W)) | PTE_COW) != 0){
       goto err;
     }
+    // rcount(pa, '+', 0);
+    increase(pa, 1);
   }
   return 0;
 
@@ -358,6 +358,16 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(va0 >= MAXVA)
+      return -1;
+    // struct proc * p = myproc();
+    // printf("copyout: pgtbl: %p\n", p->pagetable);
+    pte_t* pte = walk(pagetable, va0, 0);
+    if(pte && (*pte & PTE_COW) != 0){
+      if(copyonwrite(va0) != 0){
+        return -1;
+      }
+    }
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -439,4 +449,44 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int
+copyonwrite(uint64 va){
+  va = PGROUNDDOWN(va);
+  pagetable_t p = myproc()->pagetable;
+  pte_t* pte = walk(p, va, 0);
+  uint64 pa = PTE2PA(*pte);
+  uint flags = PTE_FLAGS(*pte);
+
+  if(!(flags & PTE_COW)){
+    printf("not cow\n");
+    return -1; // not cow page
+  }
+
+  lock();
+  // uint count = rcount(pa, 'v', 0);
+  uint count = get(pa);
+  // printf("cow: count: %d\n", count);
+  if(count > 1){
+    // count > 1, alloc a new page
+    char* mem = kalloc();
+    if(mem == 0){
+      unlock();
+      return -1;
+    }
+    memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(p, va, PGSIZE, (uint64)mem, (flags & (~PTE_COW)) | PTE_W) != 0){
+      kfree(mem);
+      unlock();
+      return -1;
+    }
+    // rcount(pa, 'n', count - 1);
+    increase(pa, -1);
+  }else{
+    // count = 1, use this page directly
+    *pte = ((*pte) & (~PTE_COW)) | PTE_W;
+  }
+  unlock();
+  return 0;
 }

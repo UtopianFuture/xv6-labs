@@ -60,9 +60,16 @@ void            ramdiskintr(void);
 void            ramdiskrw(struct buf*);
 
 // kalloc.c
+uint64          index(uint64);
+void            lock();
+void            unlock();
+void            set(uint64, int);
+uint            get(uint64);
+void            increase(uint64, int);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+uint            rcount(uint64, char, int);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -168,9 +175,11 @@ void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
 uint64          walkaddr(pagetable_t, uint64);
+pte_t *         walk(pagetable_t, uint64, int);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+int             copyonwrite(uint64);
 
 // plic.c
 void            plicinit(void);

@@ -23,6 +23,58 @@ struct {
   struct run *freelist;
 } kmem;
 
+struct COUNT{
+  uint count[(PHYSTOP - KERNBASE) / PGSIZE];
+  struct spinlock lock;
+}count;
+
+// uint rcount(uint64 pa, char func, int n)
+// {
+//   print();
+//   acquire(&count.lock);
+//   uint64 idx = (pa - KERNBASE) / PGSIZE;
+//   if(func == '+')
+//     count.count[idx]++;
+//   else if(func == '-')
+//     count.count[idx]--;
+//   else if(func == 'n')
+//     count.count[idx] = n;
+//   else if(func == 'v'){
+//     release(&count.lock);
+//    return count.count[idx]; // get value
+//   }else{
+//     printf("wrong func: %c", func);
+//   }
+//   release(&count.lock);
+//   return 0;
+// }
+
+uint64 index(uint64 pa){
+  return (pa - KERNBASE) / PGSIZE;
+}
+
+void lock(){
+  acquire(&count.lock);
+}
+
+void unlock(){
+  release(&count.lock);
+}
+
+void set(uint64 pa, int n){
+  count.count[index(pa)] = n;
+}
+
+uint get(uint64 pa){
+  return count.count[index(pa)];
+}
+
+void increase(uint64 pa, int n){
+  // lock();
+  count.count[index(pa)] += n;
+  // unlock();
+}
+
 void
 kinit()
 {
@@ -48,6 +100,14 @@ kfree(void *pa)
 {
   struct run *r;
 
+  // lock();
+  if(get((uint64)pa) > 1){
+    count.count[index((uint64)pa)] -= 1;
+    // increase((uint64)pa, -1); // still have processes use this page
+    // unlock();
+    return;
+  }
+
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
@@ -55,7 +115,9 @@ kfree(void *pa)
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
-
+  set((uint64)pa, 0);
+  // unlock();
+  // printf("kfree: rcount: %d\n", rcount((uint64)pa, 'v', 0));
   acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
@@ -76,7 +138,9 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    set((uint64)r, 1); // set the page count to 1
+  }
   return (void*)r;
 }
