@@ -155,11 +155,15 @@ freeproc(struct proc *p)
 {
   if(p->trapframe)
     kfree((void*)p->trapframe);
-  p->trapframe = 0;
+  p->trapframe = 0; 
+  if(p->kstack)
+    proc_freekstack(p);
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  // if(p->kpagetable)
+  //   proc_freekpagetable(p->kpagetable, p->kstack);
   if(p->kpagetable)
-    proc_freekpagetable(p->kpagetable, p->kstack);
+    proc_freekpagetablenophy(p->kpagetable);
   p->pagetable = 0;
   p->kpagetable = 0;
   p->sz = 0;
@@ -230,6 +234,32 @@ proc_freekpagetable(pagetable_t pagetable, uint64 kstack)
   kuvmfree(pagetable, kstack, 1);
 }
 
+// Free a process's kernel page table, donnot free the physical memory.
+void
+proc_freekpagetablenophy(pagetable_t kpagetable)
+{
+  for (int i = 0; i < 512; i++) {
+		pte_t pte = kpagetable[i];
+		if (pte & PTE_V) {
+			if ((pte & (PTE_R|PTE_W|PTE_X)) == 0) {
+				uint64 child = PTE2PA(pte);
+				proc_freekpagetablenophy((pagetable_t)child);
+			}
+		}
+	}
+	kfree((void*)kpagetable);
+}
+
+// free kstack's physical space
+void
+proc_freekstack(struct proc * p){
+  pte_t *pte = walk(p->kpagetable, p->kstack, 0);
+  if(pte == 0)
+    panic("freeproc: free kstack");
+  kfree((void*)PTE2PA(*pte));
+  p->kstack = 0;
+}
+
 // a user program that calls exec("/init")
 // od -t xC initcode
 uchar initcode[] = {
@@ -257,6 +287,8 @@ userinit(void)
   // uvminit(p->kpagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  copypage(p->pagetable, p->kpagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -279,15 +311,15 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    if (PGROUNDUP(sz + n) >= PLIC)
+      return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
-    // if((sz = uvmalloc(p->kpagetable, sz, sz + n)) == 0) {
-    //   return -1;
-    // }
+    copypage(p->pagetable, p->kpagetable, sz - n, sz); // sz already plus n
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
-    // sz = uvmdealloc(p->kpagetable, sz, sz + n);
+    copypage(p->pagetable, p->kpagetable, sz, sz - n); // sz already minus n
   }
   p->sz = sz;
   return 0;
@@ -322,6 +354,8 @@ fork(void)
   // }
 
   np->sz = p->sz;
+
+  copypage(np->pagetable, np->kpagetable, 0, np->sz);
 
   np->parent = p;
 
