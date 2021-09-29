@@ -49,6 +49,9 @@
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
+// Trampoline page stores code to switch between user and kernel space.
+// The code is mapped at the same virtual address (TRAMPOLINE)
+// in user and kernel space so that it continues to work when it switches page tables.
 #define TRAMPOLINE (MAXVA - PGSIZE)
 
 // map kernel stacks beneath the trampoline,
