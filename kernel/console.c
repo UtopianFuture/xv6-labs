@@ -79,6 +79,8 @@ consolewrite(int user_src, uint64 src, int n)
 int
 consoleread(int user_dst, uint64 dst, int n)
 {
+  char a[10];
+  a[10] = '0';
   uint target;
   int c;
   char cbuf;
