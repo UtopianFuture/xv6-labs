@@ -19,7 +19,7 @@ exec(char *path, char **argv)
   struct inode *ip;
   struct proghdr ph;
   pagetable_t pagetable = 0, oldpagetable;
-  struct proc *p = myproc();
+  struct proc *p;
 
   begin_op();
 
